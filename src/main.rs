@@ -1,43 +1,44 @@
 extern crate html5ever;
-extern crate postgres;
+extern crate redis;
 
-use std::{fs, env, io, str};
+use std::env;
+use std::string::String;
 use std::default::Default;
 
-use crate::postgres::{Connection, TlsMode};
+use redis::Commands;
 
 use crate::html5ever::parse_document;
 use crate::html5ever::rcdom::{Handle, NodeData, RcDom};
 use crate::html5ever::tendril::TendrilSink;
 
-fn walk(conn: &Connection, node: &Handle) {
+fn walk(conn: &mut redis::Connection, node: &Handle) {
     match node.data {
         NodeData::Document => println!("Document"),
-        NodeData::Doctype {
-            ref name,
-            ref public_id,
-            ref system_id,
-        } => println!("<!DOCTYPE {} \"{}\" \"{}\">", name, public_id, system_id),
-
-        NodeData::Text { contents: _ } => {
-        },
-
-        NodeData::Comment { ref contents } => {
-            conn.execute("INSERT INTO elements (comment) VALUES ($1)", &[&contents.to_string()]).unwrap();
-        }
+        NodeData::Doctype { .. } => {},
+        NodeData::Text { .. } => {},
+        NodeData::Comment { .. } => {},
 
         NodeData::Element {
             ref name,
             ref attrs,
             ..
         } => {
-            conn.execute("INSERT INTO elements (name) VALUES ($1)", &[&name.local.to_string()]).unwrap();
+            let element_name = name.local.to_lowercase();
+
+            redis::cmd("INCR")
+                .arg(format!("element_count:{}", element_name))
+                .execute(conn);
 
             print!("<{}", name.local);
 
             for attr in attrs.borrow().iter() {
+                redis::cmd("INCR")
+                    .arg(format!("attribute_count:{}:{}", element_name, attr.name.local.to_lowercase()))
+                    .execute(conn);
+
                 print!(" {}=\"{}\"", attr.name.local, attr.value);
             }
+
             println!(">");
         },
 
@@ -45,21 +46,24 @@ fn walk(conn: &Connection, node: &Handle) {
     }
 
     for child in node.children.borrow().iter() {
-        walk(&conn, child)
+        walk(conn, child)
     }
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let DATABASE_URL = env::var("HTML_DATABASE_URL").unwrap();
-    let conn = Connection::connect(DATABASE_URL, TlsMode::None).unwrap();
+    let REDIS_URL = env::var("HTML_REDIS_URL").unwrap();
+    let client = redis::Client::open(&*REDIS_URL).unwrap();
+    let mut conn = client.get_connection().unwrap();
+
+    redis::cmd("INCR").arg("page_count").execute(&mut conn);
 
     let dom = parse_document(RcDom::default(), Default::default())
         .from_utf8()
         .from_file(&args[1])
         .unwrap();
 
-    walk(&conn, &dom.document);
+    walk(&mut conn, &dom.document);
 
     if !dom.errors.is_empty() {
         for err in dom.errors.iter() {
