@@ -13,7 +13,7 @@ use crate::html5ever::tendril::TendrilSink;
 
 fn walk(conn: &mut redis::Connection, node: &Handle) {
     match node.data {
-        NodeData::Document => println!("Document"),
+        NodeData::Document => {},
         NodeData::Doctype { .. } => {},
         NodeData::Text { .. } => {},
         NodeData::Comment { .. } => {},
@@ -29,17 +29,11 @@ fn walk(conn: &mut redis::Connection, node: &Handle) {
                 .arg(format!("element_count:{}", element_name))
                 .execute(conn);
 
-            print!("<{}", name.local);
-
             for attr in attrs.borrow().iter() {
                 redis::cmd("INCR")
                     .arg(format!("attribute_count:{}:{}", element_name, attr.name.local.to_lowercase()))
                     .execute(conn);
-
-                print!(" {}=\"{}\"", attr.name.local, attr.value);
             }
-
-            println!(">");
         },
 
         NodeData::ProcessingInstruction { .. } => unreachable!(),
@@ -64,10 +58,4 @@ fn main() {
         .unwrap();
 
     walk(&mut conn, &dom.document);
-
-    if !dom.errors.is_empty() {
-        for err in dom.errors.iter() {
-            println!("Error: {}", err)
-        }
-    }
 }
